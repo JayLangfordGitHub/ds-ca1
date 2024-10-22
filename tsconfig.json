@@ -6,6 +6,7 @@
       "es2020",
       "dom"
     ],
+    
     "declaration": true,
     "strict": true,
     "noImplicitAny": true,
@@ -19,6 +20,9 @@
     "inlineSourceMap": true,
     "inlineSources": true,
     "experimentalDecorators": true,
+    "resolveJsonModule": true,
+
+    "esModuleInterop": true,
     "strictPropertyInitialization": false,
     "typeRoots": [
       "./node_modules/@types"
