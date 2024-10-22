@@ -36,21 +36,18 @@ export class RestAPIStack extends cdk.Stack {
 
     
     // Functions 
-    const getMovieByIdFn = new lambdanode.NodejsFunction(
-      this,
-      "GetMovieByIdFn",
-      {
-        architecture: lambda.Architecture.ARM_64,
-        runtime: lambda.Runtime.NODEJS_18_X,
-        entry: `${__dirname}/../lambdas/getMovieById.ts`,
-        timeout: cdk.Duration.seconds(10),
-        memorySize: 128,
-        environment: {
-          TABLE_NAME: moviesTable.tableName,
-          REGION: 'eu-west-1',
-        },
-      }
-      );
+    const getMovieByIdFn = new lambdanode.NodejsFunction(this, "GetMovieByIdFn", {
+      architecture: lambda.Architecture.ARM_64,
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: `${__dirname}/../lambdas/getMovieById.ts`, // Ensure this path is correct
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 128,
+      environment: {
+        TABLE_NAME: moviesTable.tableName,
+        CAST_TABLE_NAME: movieCastsTable.tableName,  // Add this line for accessing the movie cast
+        REGION: "eu-west-1",
+      },
+   });
       
       const getAllMoviesFn = new lambdanode.NodejsFunction(
         this,
@@ -131,6 +128,8 @@ export class RestAPIStack extends cdk.Stack {
         moviesTable.grantReadWriteData(newMovieFn)
         moviesTable.grantReadWriteData(deleteMovieFn);
         movieCastsTable.grantReadData(getMovieCastMembersFn);
+        moviesTable.grantReadData(getMovieByIdFn);
+        movieCastsTable.grantReadData(getMovieByIdFn);
         
         // REST API 
     const api = new apig.RestApi(this, "RestAPI", {
