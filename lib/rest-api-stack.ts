@@ -76,7 +76,7 @@ export class RestAPIStack extends cdk.Stack {
     this.addAuthRoute(authApi, "signup", "POST", "SignupFn", "signup.ts");
     this.addAuthRoute(authApi, "signin", "POST", "SigninFn", "signin.ts");
 
-    // Authorizer Lambda Function
+    // Authoriser Lambda Function
     const authorizerFn = new lambdanode.NodejsFunction(this, "AuthorizerFn", {
       entry: `${__dirname}/../lambdas/auth/authoriser.ts`,
       handler: "handler",
@@ -88,7 +88,7 @@ export class RestAPIStack extends cdk.Stack {
       },
     });
 
-    // Custom Request Authorizer
+    // Custom Request Authoriser
     const requestAuthorizer = new apig.RequestAuthorizer(this, "RequestAuthorizer", {
       identitySources: [apig.IdentitySource.header("cookie")],
       handler: authorizerFn,
