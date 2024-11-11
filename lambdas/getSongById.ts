@@ -8,28 +8,26 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
   try {
     console.log("[EVENT]", JSON.stringify(event));
     
-    // Extract path parameters and query string parameters
     const parameters = event?.pathParameters;
     const queryParams = event?.queryStringParameters;
     
-    const movieId = parameters?.movieId ? parseInt(parameters.movieId) : undefined;
-    const includeCast = queryParams?.cast === "true"; // Check if cast=true is present
+    const songId = parameters?.songId ? parseInt(parameters.songId) : undefined;
+    const includeArtists = queryParams?.artists === "true"; // Check if artists=true is present
 
-    if (!movieId) {
+    if (!songId) {
       return {
         statusCode: 404,
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify({ Message: "Missing movie Id" }),
+        body: JSON.stringify({ Message: "Missing song Id" }),
       };
     }
 
-    // Fetch movie metadata from the movies table
     const commandOutput = await ddbDocClient.send(
       new GetCommand({
         TableName: process.env.TABLE_NAME,
-        Key: { id: movieId },
+        Key: { id: songId },
       })
     );
 
@@ -41,34 +39,30 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify({ Message: "Invalid movie Id" }),
+        body: JSON.stringify({ Message: "Invalid song Id" }),
       };
     }
 
-    // Initialize the response body with the movie metadata
     const body: any = {
       data: commandOutput.Item,
     };
 
-    // Fetch the cast if cast=true is specified in the query parameters
-    if (includeCast) {
-      const castCommand = new QueryCommand({
-        TableName: process.env.CAST_TABLE_NAME, // Ensure your environment variable is set correctly for this
-        KeyConditionExpression: "movieId = :movieId",
+    if (includeArtists) {
+      const artistCommand = new QueryCommand({
+        TableName: process.env.ARTIST_TABLE_NAME,
+        KeyConditionExpression: "songId = :songId",
         ExpressionAttributeValues: {
-          ":movieId": movieId,
+          ":songId": songId,
         },
       });
 
-      const castResponse = await ddbDocClient.send(castCommand);
+      const artistResponse = await ddbDocClient.send(artistCommand);
 
-      console.log("Cast Query response: ", castResponse);
+      console.log("Artist Query response: ", artistResponse);
 
-      // Append cast data to the response body
-      body.cast = castResponse.Items || [];
+      body.artists = artistResponse.Items || [];
     }
 
-    // Return the response with metadata and optional cast data
     return {
       statusCode: 200,
       headers: {

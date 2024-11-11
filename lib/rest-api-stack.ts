@@ -1,139 +1,103 @@
 import * as cdk from "aws-cdk-lib";
-import * as lambdanode from "aws-cdk-lib/aws-lambda-nodejs";
-import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdanode from "aws-cdk-lib/aws-lambda-nodejs";
+import * as apig from "aws-cdk-lib/aws-apigateway";
 import * as custom from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
+import { UserPool } from "aws-cdk-lib/aws-cognito";
 import { generateBatch } from "../shared/util";
-import { movies, movieCasts } from "../seed/movies";
-import * as apig from "aws-cdk-lib/aws-apigateway";
+import { songs, songArtists } from "../seed/songs";
 
 export class RestAPIStack extends cdk.Stack {
+  private userPoolId: string;
+  private userPoolClientId: string;
+
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Tables 
-    const moviesTable = new dynamodb.Table(this, "MoviesTable", {
+    // Setup Cognito User Pool and App Client
+    const userPool = new UserPool(this, "UserPool", {
+      signInAliases: { username: true, email: true },
+      selfSignUpEnabled: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    const appClient = userPool.addClient("AppClient", {
+      authFlows: { userPassword: true },
+    });
+    this.userPoolId = userPool.userPoolId;
+    this.userPoolClientId = appClient.userPoolClientId;
+
+    // Setup DynamoDB tables for Songs and SongArtists
+    const songsTable = new dynamodb.Table(this, "SongsTable", {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "id", type: dynamodb.AttributeType.NUMBER },
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      tableName: "Movies",
+      tableName: "Songs",
     });
-
-    const movieCastsTable = new dynamodb.Table(this, "MovieCastTable", {
+    const songArtistsTable = new dynamodb.Table(this, "SongArtistsTable", {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      partitionKey: { name: "movieId", type: dynamodb.AttributeType.NUMBER },
-      sortKey: { name: "actorName", type: dynamodb.AttributeType.STRING },
+      partitionKey: { name: "songId", type: dynamodb.AttributeType.NUMBER },
+      sortKey: { name: "artistName", type: dynamodb.AttributeType.STRING },
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      tableName: "MovieCast",
+      tableName: "SongArtists",
     });
-
-    movieCastsTable.addLocalSecondaryIndex({
+    songArtistsTable.addLocalSecondaryIndex({
       indexName: "roleIx",
       sortKey: { name: "roleName", type: dynamodb.AttributeType.STRING },
     });
 
-    
-    // Functions 
-    const getMovieByIdFn = new lambdanode.NodejsFunction(this, "GetMovieByIdFn", {
-      architecture: lambda.Architecture.ARM_64,
-      runtime: lambda.Runtime.NODEJS_16_X,
-      entry: `${__dirname}/../lambdas/getMovieById.ts`, // Ensure this path is correct
-      timeout: cdk.Duration.seconds(10),
+    // Initialize songs and song artists data in DynamoDB
+    new custom.AwsCustomResource(this, "songsddbInitData", {
+      onCreate: {
+        service: "DynamoDB",
+        action: "batchWriteItem",
+        parameters: {
+          RequestItems: {
+            [songsTable.tableName]: generateBatch(songs),
+            [songArtistsTable.tableName]: generateBatch(songArtists),
+          },
+        },
+        physicalResourceId: custom.PhysicalResourceId.of("songsddbInitData"),
+      },
+      policy: custom.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: [songsTable.tableArn, songArtistsTable.tableArn],
+      }),
+    });
+
+    // Auth API (for signup and signin)
+    const authApi = new apig.RestApi(this, "AuthServiceApi", {
+      description: "Authentication Service RestApi",
+      endpointTypes: [apig.EndpointType.REGIONAL],
+      defaultCorsPreflightOptions: {
+        allowOrigins: apig.Cors.ALL_ORIGINS,
+      },
+    });
+    this.addAuthRoute(authApi, "signup", "POST", "SignupFn", "signup.ts");
+    this.addAuthRoute(authApi, "signin", "POST", "SigninFn", "signin.ts");
+
+    // Authorizer Lambda Function
+    const authorizerFn = new lambdanode.NodejsFunction(this, "AuthorizerFn", {
+      entry: `${__dirname}/../lambdas/auth/authoriser.ts`,
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_18_X,
       memorySize: 128,
       environment: {
-        TABLE_NAME: moviesTable.tableName,
-        CAST_TABLE_NAME: movieCastsTable.tableName,  // Add this line for accessing the movie cast
-        REGION: "eu-west-1",
+        USER_POOL_ID: this.userPoolId,
+        REGION: cdk.Aws.REGION,
       },
-   });
-      
-      const getAllMoviesFn = new lambdanode.NodejsFunction(
-        this,
-        "GetAllMoviesFn",
-        {
-          architecture: lambda.Architecture.ARM_64,
-          runtime: lambda.Runtime.NODEJS_18_X,
-          entry: `${__dirname}/../lambdas/getAllMovies.ts`,
-          timeout: cdk.Duration.seconds(10),
-          memorySize: 128,
-          environment: {
-            TABLE_NAME: moviesTable.tableName,
-            REGION: 'eu-west-1',
-          },
-        }
-        );
+    });
 
-        const newMovieFn = new lambdanode.NodejsFunction(this, "AddMovieFn", {
-          architecture: lambda.Architecture.ARM_64,
-          runtime: lambda.Runtime.NODEJS_16_X,
-          entry: `${__dirname}/../lambdas/addMovie.ts`,
-          timeout: cdk.Duration.seconds(10),
-          memorySize: 128,
-          environment: {
-            TABLE_NAME: moviesTable.tableName,
-            REGION: "eu-west-1",
-          },
-        });
+    // Custom Request Authorizer
+    const requestAuthorizer = new apig.RequestAuthorizer(this, "RequestAuthorizer", {
+      identitySources: [apig.IdentitySource.header("cookie")],
+      handler: authorizerFn,
+      resultsCacheTtl: cdk.Duration.seconds(0),
+    });
 
-        const deleteMovieFn = new lambdanode.NodejsFunction(this, "DeleteMovieFn", {
-          architecture: lambda.Architecture.ARM_64,
-          runtime: lambda.Runtime.NODEJS_16_X,
-          entry: `${__dirname}/../lambdas/deleteMovies.ts`,
-          timeout: cdk.Duration.seconds(10),
-          memorySize: 128,
-          environment: {
-            TABLE_NAME: moviesTable.tableName,
-            REGION: "eu-west-1",
-          },
-        });
-        
-        new custom.AwsCustomResource(this, "moviesddbInitData", {
-          onCreate: {
-            service: "DynamoDB",
-            action: "batchWriteItem",
-            parameters: {
-              RequestItems: {
-                [moviesTable.tableName]: generateBatch(movies),
-                [movieCastsTable.tableName]: generateBatch(movieCasts),  // Added
-              },
-            },
-            physicalResourceId: custom.PhysicalResourceId.of("moviesddbInitData"), //.of(Date.now().toString()),
-          },
-          policy: custom.AwsCustomResourcePolicy.fromSdkCalls({
-            resources: [moviesTable.tableArn, movieCastsTable.tableArn],  // Includes movie cast
-          }),
-        });
-
-        const getMovieCastMembersFn = new lambdanode.NodejsFunction(
-          this,
-          "GetCastMemberFn",
-          {
-            architecture: lambda.Architecture.ARM_64,
-            runtime: lambda.Runtime.NODEJS_16_X,
-            entry: `${__dirname}/../lambdas/getMovieCastMember.ts`,
-            timeout: cdk.Duration.seconds(10),
-            memorySize: 128,
-            environment: {
-              TABLE_NAME: movieCastsTable.tableName,
-              REGION: "eu-west-1",
-            },
-          }
-        );
-        
-        // Permissions 
-        moviesTable.grantReadData(getMovieByIdFn)
-        moviesTable.grantReadData(getAllMoviesFn)
-        moviesTable.grantReadWriteData(newMovieFn)
-        moviesTable.grantReadWriteData(deleteMovieFn);
-        movieCastsTable.grantReadData(getMovieCastMembersFn);
-        moviesTable.grantReadData(getMovieByIdFn);
-        movieCastsTable.grantReadData(getMovieByIdFn);
-        
-        // REST API 
+    // Rest API for Songs with protected and public endpoints
     const api = new apig.RestApi(this, "RestAPI", {
-      description: "demo api",
+      description: "Songs API",
       deployOptions: {
         stageName: "dev",
       },
@@ -145,35 +109,77 @@ export class RestAPIStack extends cdk.Stack {
       },
     });
 
-    const moviesEndpoint = api.root.addResource("movies");
-    moviesEndpoint.addMethod(
-      "GET",
-      new apig.LambdaIntegration(getAllMoviesFn, { proxy: true })
-      
-    );
-    // NEW
-    moviesEndpoint.addMethod(
-      "POST",
-      new apig.LambdaIntegration(newMovieFn, { proxy: true })
-    );
-    
+    // Lambda functions for Songs API
+    const getSongByIdFn = this.createLambdaFunction("GetSongByIdFn", "getSongById.ts", songsTable.tableName);
+    const getAllSongsFn = this.createLambdaFunction("GetAllSongsFn", "getAllSongs.ts", songsTable.tableName);
+    const newSongFn = this.createLambdaFunction("AddSongFn", "addSong.ts", songsTable.tableName);
+    const deleteSongFn = this.createLambdaFunction("DeleteSongFn", "deleteSongs.ts", songsTable.tableName);
+    const getSongArtistFn = this.createLambdaFunction("GetSongArtistFn", "getSongArtist.ts", songArtistsTable.tableName);
 
-    const movieEndpoint = moviesEndpoint.addResource("{movieId}");
-    movieEndpoint.addMethod(
-      "GET",
-      new apig.LambdaIntegration(getMovieByIdFn, { proxy: true })
-    );
-    moviesEndpoint.addMethod(
-      "DELETE",
-      new apig.LambdaIntegration(deleteMovieFn, { proxy: true })
-    );
+    // Permissions
+    songsTable.grantReadData(getSongByIdFn);
+    songsTable.grantReadData(getAllSongsFn);
+    songsTable.grantReadWriteData(newSongFn);
+    songsTable.grantReadWriteData(deleteSongFn);
+    songArtistsTable.grantReadData(getSongArtistFn);
 
-    const movieCastEndpoint = moviesEndpoint.addResource("cast");
-movieCastEndpoint.addMethod(
-    "GET",
-    new apig.LambdaIntegration(getMovieCastMembersFn, { proxy: true })
-);
-        
-      }
-    }
-    
+    // API Routes for Songs
+    const songsEndpoint = api.root.addResource("songs");
+    songsEndpoint.addMethod("GET", new apig.LambdaIntegration(getAllSongsFn), {
+      authorizer: requestAuthorizer,
+      authorizationType: apig.AuthorizationType.CUSTOM,
+    });
+    songsEndpoint.addMethod("POST", new apig.LambdaIntegration(newSongFn));
+
+    const songEndpoint = songsEndpoint.addResource("{songId}");
+    songEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongByIdFn), {
+      authorizer: requestAuthorizer,
+      authorizationType: apig.AuthorizationType.CUSTOM,
+    });
+    songEndpoint.addMethod("DELETE", new apig.LambdaIntegration(deleteSongFn), {
+      authorizer: requestAuthorizer,
+      authorizationType: apig.AuthorizationType.CUSTOM,
+    });
+
+    const songArtistEndpoint = songsEndpoint.addResource("artists");
+    songArtistEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongArtistFn));
+  }
+
+  // Helper method to create Lambda functions
+  private createLambdaFunction(fnName: string, entryFile: string, tableName: string) {
+    return new lambdanode.NodejsFunction(this, fnName, {
+      architecture: lambda.Architecture.ARM_64,
+      runtime: lambda.Runtime.NODEJS_18_X,
+      entry: `${__dirname}/../lambdas/${entryFile}`,
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 128,
+      environment: {
+        TABLE_NAME: tableName,
+        REGION: cdk.Aws.REGION,
+      },
+    });
+  }
+
+  // Helper method to add Auth routes
+  private addAuthRoute(
+    api: apig.RestApi,
+    resourceName: string,
+    method: string,
+    fnName: string,
+    fnEntry: string
+  ): void {
+    const fn = new lambdanode.NodejsFunction(this, fnName, {
+      entry: `${__dirname}/../lambdas/auth/${fnEntry}`,
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_18_X,
+      memorySize: 128,
+      environment: {
+        USER_POOL_ID: this.userPoolId,
+        CLIENT_ID: this.userPoolClientId,
+        REGION: cdk.Aws.REGION,
+      },
+    });
+    const resource = api.root.addResource(resourceName);
+    resource.addMethod(method, new apig.LambdaIntegration(fn));
+  }
+}

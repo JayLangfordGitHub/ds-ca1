@@ -5,7 +5,7 @@ import Ajv from "ajv";
 import schema from "../shared/types.schema.json";
 
 const ajv = new Ajv();
-const isValidBodyParams = ajv.compile(schema.definitions["Movie"] || {});
+const isValidBodyParams = ajv.compile(schema.definitions["Song"] || {});
 
 const ddbDocClient = createDDbDocClient();
 
@@ -15,9 +15,15 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
     console.log("[EVENT]", JSON.stringify(event));
     const body = event.body ? JSON.parse(event.body) : undefined;
     if (!body) {
-      // as before ....
+      return {
+        statusCode: 500,
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ message: "Missing request body" }),
+      };
     }
-    // NEW
+
     if (!isValidBodyParams(body)) {
       return {
         statusCode: 500,
@@ -25,8 +31,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          message: `Incorrect type. Must match Movie schema`,
-          schema: schema.definitions["Movie"],
+          message: `Incorrect type. Must match Song schema`,
+          schema: schema.definitions["Song"],
         }),
       };
     }
@@ -42,7 +48,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ message: "Movie added" }),
+      body: JSON.stringify({ message: "Song added" }),
     };
   } catch (error: any) {
     console.log(JSON.stringify(error));

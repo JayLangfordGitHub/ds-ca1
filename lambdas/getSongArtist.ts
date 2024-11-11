@@ -1,5 +1,5 @@
 import { APIGatewayProxyHandlerV2 } from "aws-lambda";
-import { MovieCastMemberQueryParams } from "../shared/types";
+import { SongArtistQueryParams } from "../shared/types";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
@@ -11,7 +11,7 @@ import schema from "../shared/types.schema.json";
 
 const ajv = new Ajv();
 const isValidQueryParams = ajv.compile(
-  schema.definitions["MovieCastMemberQueryParams"] || {}
+  schema.definitions["SongArtistQueryParams"] || {}
 );
  
 const ddbDocClient = createDocumentClient();
@@ -37,12 +37,12 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
         },
         body: JSON.stringify({
           message: `Incorrect type. Must match Query parameters schema`,
-          schema: schema.definitions["MovieCastMemberQueryParams"],
+          schema: schema.definitions["SongArtistQueryParams"],
         }),
       };
     }
     
-    const movieId = parseInt(queryParams.movieId);
+    const songId = parseInt(queryParams.songId);
     let commandInput: QueryCommandInput = {
       TableName: process.env.TABLE_NAME,
     };
@@ -50,27 +50,27 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
       commandInput = {
         ...commandInput,
         IndexName: "roleIx",
-        KeyConditionExpression: "movieId = :m and begins_with(roleName, :r) ",
+        KeyConditionExpression: "songId = :s and begins_with(roleName, :r) ",
         ExpressionAttributeValues: {
-          ":m": movieId,
+          ":s": songId,
           ":r": queryParams.roleName,
         },
       };
-    } else if ("actorName" in queryParams) {
+    } else if ("artistName" in queryParams) {
       commandInput = {
         ...commandInput,
-        KeyConditionExpression: "movieId = :m and begins_with(actorName, :a) ",
+        KeyConditionExpression: "songId = :s and begins_with(artistName, :a) ",
         ExpressionAttributeValues: {
-          ":m": movieId,
-          ":a": queryParams.actorName,
+          ":s": songId,
+          ":a": queryParams.artistName,
         },
       };
     } else {
       commandInput = {
         ...commandInput,
-        KeyConditionExpression: "movieId = :m",
+        KeyConditionExpression: "songId = :s",
         ExpressionAttributeValues: {
-          ":m": movieId,
+          ":s": songId,
         },
       };
     }
@@ -79,35 +79,35 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
       new QueryCommand(commandInput)
       );
       
-      return {
-        statusCode: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          data: commandOutput.Items,
-        }),
-      };
-    } catch (error: any) {
-      console.log(JSON.stringify(error));
-      return {
-        statusCode: 500,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ error }),
-      };
-    }
-  };
-  
-  function createDocumentClient() {
-    const ddbClient = new DynamoDBClient({ region: process.env.REGION });
-    const marshallOptions = {
-      convertEmptyValues: true,
-      removeUndefinedValues: true,
-      convertClassInstanceToMap: true,
+    return {
+      statusCode: 200,
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        data: commandOutput.Items,
+      }),
     };
-    const unmarshallOptions = {
+  } catch (error: any) {
+    console.log(JSON.stringify(error));
+    return {
+      statusCode: 500,
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ error }),
+    };
+  }
+};
+
+function createDocumentClient() {
+  const ddbClient = new DynamoDBClient({ region: process.env.REGION });
+  const marshallOptions = {
+    convertEmptyValues: true,
+    removeUndefinedValues: true,
+    convertClassInstanceToMap: true,
+  };
+  const unmarshallOptions = {
     wrapNumbers: false,
   };
   const translateConfig = { marshallOptions, unmarshallOptions };
