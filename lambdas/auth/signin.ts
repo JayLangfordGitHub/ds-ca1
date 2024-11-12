@@ -1,4 +1,4 @@
-import { APIGatewayProxyHandlerV2, APIGatewayProxyResultV2 } from "aws-lambda";
+import { APIGatewayProxyHandlerV2, APIGatewayProxyResultV2 } from "aws-lambda"; 
 import { SignInBody } from "../../shared/types";
 import { CognitoIdentityProviderClient, InitiateAuthCommand } from "@aws-sdk/client-cognito-identity-provider";
 import Ajv from "ajv";
@@ -20,6 +20,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event): Promise<APIGatew
         body: JSON.stringify({ message: "Invalid signin data" }),
       };
     }
+
     const { username, password } = body as SignInBody;
     const command = new InitiateAuthCommand({
       ClientId: process.env.CLIENT_ID!,
@@ -27,17 +28,27 @@ export const handler: APIGatewayProxyHandlerV2 = async (event): Promise<APIGatew
       AuthParameters: { USERNAME: username, PASSWORD: password },
     });
     const response = await client.send(command);
+
     const token = response.AuthenticationResult?.IdToken;
+
+    if (!token) {
+      return {
+        statusCode: 401,
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ message: "Authentication failed" }),
+      };
+    }
 
     return {
       statusCode: 200,
       headers: {
         "content-type": "application/json",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Origin": "*",
-        "Set-Cookie": `token=${token}; HttpOnly; Secure`,
+        "Access-Control-Allow-Origin": "*", 
+        "Set-Cookie": `token=${token}; HttpOnly; Secure; SameSite=Strict; Path=/`,
       },
-      body: JSON.stringify({ message: "Signin successful" }),
+      body: JSON.stringify({ message: "Signin successful", token }), 
     };
   } catch (error) {
     return {
