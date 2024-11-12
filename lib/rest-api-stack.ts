@@ -47,7 +47,7 @@ export class RestAPIStack extends cdk.Stack {
       sortKey: { name: "roleName", type: dynamodb.AttributeType.STRING },
     });
 
-    // Initialize songs and song artists data in DynamoDB
+    // Initialise songs and song artists data in DynamoDB
     new custom.AwsCustomResource(this, "songsddbInitData", {
       onCreate: {
         service: "DynamoDB",
@@ -65,7 +65,7 @@ export class RestAPIStack extends cdk.Stack {
       }),
     });
 
-    // Auth API (for signup and signin)
+    // Auth API (for signup, signin, and confirm signup)
     const authApi = new apig.RestApi(this, "AuthServiceApi", {
       description: "Authentication Service RestApi",
       endpointTypes: [apig.EndpointType.REGIONAL],
@@ -73,8 +73,10 @@ export class RestAPIStack extends cdk.Stack {
         allowOrigins: apig.Cors.ALL_ORIGINS,
       },
     });
+
     this.addAuthRoute(authApi, "signup", "POST", "SignupFn", "signup.ts");
     this.addAuthRoute(authApi, "signin", "POST", "SigninFn", "signin.ts");
+    this.addAuthRoute(authApi, "confirm_signup", "POST", "ConfirmSignUpFn", "confirmSignUp.ts");
 
     // Authoriser Lambda Function
     const authorizerFn = new lambdanode.NodejsFunction(this, "AuthorizerFn", {
