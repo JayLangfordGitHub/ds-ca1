@@ -4,6 +4,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdanode from "aws-cdk-lib/aws-lambda-nodejs";
 import * as apig from "aws-cdk-lib/aws-apigateway";
 import * as custom from "aws-cdk-lib/custom-resources";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 import { UserPool } from "aws-cdk-lib/aws-cognito";
 import { generateBatch } from "../shared/util";
@@ -79,7 +80,7 @@ export class RestAPIStack extends cdk.Stack {
     this.addAuthRoute(authApi, "confirm_signup", "POST", "ConfirmSignUpFn", "confirmSignUp.ts");
     this.addAuthRoute(authApi, "signout", "POST", "SignoutFn", "signout.ts");
 
-    // Authorizer Lambda Function
+    // Authoriser Lambda Function
     const authorizerFn = new lambdanode.NodejsFunction(this, "AuthorizerFn", {
       entry: `${__dirname}/../lambdas/auth/authoriser.ts`,
       handler: "handler",
@@ -91,7 +92,7 @@ export class RestAPIStack extends cdk.Stack {
       },
     });
 
-    // Custom Request Authorizer
+    // Custom Request Authoriser
     const requestAuthorizer = new apig.RequestAuthorizer(this, "RequestAuthorizer", {
       identitySources: [apig.IdentitySource.header("cookie")],
       handler: authorizerFn,
@@ -117,22 +118,32 @@ export class RestAPIStack extends cdk.Stack {
     const getAllSongsFn = this.createLambdaFunction("GetAllSongsFn", "getAllSongs.ts", songsTable.tableName);
     const newSongFn = this.createLambdaFunction("AddSongFn", "addSong.ts", songsTable.tableName);
     const deleteSongFn = this.createLambdaFunction("DeleteSongFn", "deleteSongs.ts", songsTable.tableName);
+    const updateSongFn = this.createLambdaFunction("UpdateSongFn", "updateSong.ts", songsTable.tableName);
     const getSongArtistFn = this.createLambdaFunction("GetSongArtistFn", "getSongArtist.ts", songArtistsTable.tableName);
+
+    // Grant permissions to translate for the update function
+    updateSongFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["translate:TranslateText"],
+        resources: ["*"],
+      })
+    );
 
     // Permissions
     songsTable.grantReadData(getSongByIdFn);
     songsTable.grantReadData(getAllSongsFn);
     songsTable.grantReadWriteData(newSongFn);
     songsTable.grantReadWriteData(deleteSongFn);
+    songsTable.grantReadWriteData(updateSongFn);
     songArtistsTable.grantReadData(getSongArtistFn);
 
     // API Routes for Songs
     const songsEndpoint = api.root.addResource("songs");
 
-    // Public GET method for all songs (no authorizer)
+    // Public GET method for all songs
     songsEndpoint.addMethod("GET", new apig.LambdaIntegration(getAllSongsFn));
 
-    // Protected POST method for adding a new song (with authorizer)
+    // Protected POST method for adding a new song
     songsEndpoint.addMethod("POST", new apig.LambdaIntegration(newSongFn), {
       authorizer: requestAuthorizer,
       authorizationType: apig.AuthorizationType.CUSTOM,
@@ -141,16 +152,22 @@ export class RestAPIStack extends cdk.Stack {
     // Song-specific endpoint
     const songEndpoint = songsEndpoint.addResource("{songId}");
 
-    // Public GET method for retrieving a song by ID (no authorizer)
+    // Public GET method for retrieving a song by ID
     songEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongByIdFn));
 
-    // Protected DELETE method for deleting a song (with authorizer)
+    // Protected DELETE method for deleting a song
     songEndpoint.addMethod("DELETE", new apig.LambdaIntegration(deleteSongFn), {
       authorizer: requestAuthorizer,
       authorizationType: apig.AuthorizationType.CUSTOM,
     });
 
-    // Public GET method for song artists (no authorizer)
+    // Protected PUT method for updating a song
+    songEndpoint.addMethod("PUT", new apig.LambdaIntegration(updateSongFn), {
+      authorizer: requestAuthorizer,
+      authorizationType: apig.AuthorizationType.CUSTOM,
+    });
+
+    // Public GET method for song artists
     const songArtistEndpoint = songsEndpoint.addResource("artists");
     songArtistEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongArtistFn));
   }
