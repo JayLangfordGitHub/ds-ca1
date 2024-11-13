@@ -77,8 +77,9 @@ export class RestAPIStack extends cdk.Stack {
     this.addAuthRoute(authApi, "signup", "POST", "SignupFn", "signup.ts");
     this.addAuthRoute(authApi, "signin", "POST", "SigninFn", "signin.ts");
     this.addAuthRoute(authApi, "confirm_signup", "POST", "ConfirmSignUpFn", "confirmSignUp.ts");
+    this.addAuthRoute(authApi, "signout", "POST", "SignoutFn", "signout.ts");
 
-    // Authoriser Lambda Function
+    // Authorizer Lambda Function
     const authorizerFn = new lambdanode.NodejsFunction(this, "AuthorizerFn", {
       entry: `${__dirname}/../lambdas/auth/authoriser.ts`,
       handler: "handler",
@@ -90,7 +91,7 @@ export class RestAPIStack extends cdk.Stack {
       },
     });
 
-    // Custom Request Authoriser
+    // Custom Request Authorizer
     const requestAuthorizer = new apig.RequestAuthorizer(this, "RequestAuthorizer", {
       identitySources: [apig.IdentitySource.header("cookie")],
       handler: authorizerFn,
@@ -127,22 +128,29 @@ export class RestAPIStack extends cdk.Stack {
 
     // API Routes for Songs
     const songsEndpoint = api.root.addResource("songs");
-    songsEndpoint.addMethod("GET", new apig.LambdaIntegration(getAllSongsFn), {
-      authorizer: requestAuthorizer,
-      authorizationType: apig.AuthorizationType.CUSTOM,
-    });
-    songsEndpoint.addMethod("POST", new apig.LambdaIntegration(newSongFn));
 
-    const songEndpoint = songsEndpoint.addResource("{songId}");
-    songEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongByIdFn), {
+    // Public GET method for all songs (no authorizer)
+    songsEndpoint.addMethod("GET", new apig.LambdaIntegration(getAllSongsFn));
+
+    // Protected POST method for adding a new song (with authorizer)
+    songsEndpoint.addMethod("POST", new apig.LambdaIntegration(newSongFn), {
       authorizer: requestAuthorizer,
       authorizationType: apig.AuthorizationType.CUSTOM,
     });
+
+    // Song-specific endpoint
+    const songEndpoint = songsEndpoint.addResource("{songId}");
+
+    // Public GET method for retrieving a song by ID (no authorizer)
+    songEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongByIdFn));
+
+    // Protected DELETE method for deleting a song (with authorizer)
     songEndpoint.addMethod("DELETE", new apig.LambdaIntegration(deleteSongFn), {
       authorizer: requestAuthorizer,
       authorizationType: apig.AuthorizationType.CUSTOM,
     });
 
+    // Public GET method for song artists (no authorizer)
     const songArtistEndpoint = songsEndpoint.addResource("artists");
     songArtistEndpoint.addMethod("GET", new apig.LambdaIntegration(getSongArtistFn));
   }

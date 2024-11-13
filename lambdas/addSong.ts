@@ -6,58 +6,37 @@ import schema from "../shared/types.schema.json";
 
 const ajv = new Ajv();
 const isValidBodyParams = ajv.compile(schema.definitions["Song"] || {});
-
 const ddbDocClient = createDDbDocClient();
 
-export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
+export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   try {
-    // Print Event
-    console.log("[EVENT]", JSON.stringify(event));
     const body = event.body ? JSON.parse(event.body) : undefined;
-    if (!body) {
+    if (!body || !isValidBodyParams(body)) {
       return {
-        statusCode: 500,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ message: "Missing request body" }),
+        statusCode: 400,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "Invalid request body" }),
       };
     }
 
-    if (!isValidBodyParams(body)) {
-      return {
-        statusCode: 500,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          message: `Incorrect type. Must match Song schema`,
-          schema: schema.definitions["Song"],
-        }),
-      };
-    }
-
-    const commandOutput = await ddbDocClient.send(
+    await ddbDocClient.send(
       new PutCommand({
         TableName: process.env.TABLE_NAME,
         Item: body,
       })
     );
+
     return {
       statusCode: 201,
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ message: "Song added" }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "Song added", song: body }),
     };
   } catch (error: any) {
     console.log(JSON.stringify(error));
     return {
       statusCode: 500,
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ error }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: error.message }),
     };
   }
 };
@@ -69,9 +48,6 @@ function createDDbDocClient() {
     removeUndefinedValues: true,
     convertClassInstanceToMap: true,
   };
-  const unmarshallOptions = {
-    wrapNumbers: false,
-  };
-  const translateConfig = { marshallOptions, unmarshallOptions };
-  return DynamoDBDocumentClient.from(ddbClient, translateConfig);
+  const unmarshallOptions = { wrapNumbers: false };
+  return DynamoDBDocumentClient.from(ddbClient, { marshallOptions, unmarshallOptions });
 }
